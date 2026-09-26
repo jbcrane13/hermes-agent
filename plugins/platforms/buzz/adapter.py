@@ -1818,18 +1818,22 @@ class BuzzAdapter(BasePlatformAdapter):
 # ── Plugin registration ──────────────────────────────────────────────────────
 
 def _profile_buzz_extra() -> dict:
-    """``buzz.extra`` from the scoped profile's config.yaml for ``check_requirements``; failures yield {} (fail closed)."""
+    """Resolve the scoped gate through the gateway's config composition, without env bridging."""
     if not _profile_scoped():
         return {}
     try:
+        from gateway.config import PlatformConfig
+        from gateway.config_loader import load_legacy_gateway_json, merge_platform_sections
+        from hermes_cli.config_effective import load_user_config_effective
         from hermes_constants import get_hermes_home
-        from hermes_cli.config import read_user_config_raw
-        cfg = read_user_config_raw(Path(get_hermes_home()) / "config.yaml")
+
+        home = Path(get_hermes_home())
+        cfg = load_user_config_effective(home / "config.yaml", fail_closed=True)
+        platforms = merge_platform_sections(cfg, cfg.get("gateway"), load_legacy_gateway_json(home))
+        buzz = platforms.get("buzz")
+        return PlatformConfig.from_dict(buzz).extra if isinstance(buzz, dict) else {}
     except Exception:
         return {}
-    buzz = ((cfg.get("gateway") or {}).get("platforms") or {}).get("buzz") if isinstance(cfg, dict) else None
-    extra = buzz.get("extra", buzz) if isinstance(buzz, dict) else None
-    return extra if isinstance(extra, dict) else {}
 
 
 def check_requirements() -> bool:
@@ -2000,7 +2004,7 @@ def register(ctx):
     ctx.register_platform(
         name="buzz", label="Buzz", adapter_factory=lambda cfg: BuzzAdapter(cfg), check_fn=check_requirements,
         validate_config=validate_config, is_connected=is_connected, required_env=["BUZZ_RELAY_URL", "BUZZ_PRIVATE_KEY"],
-        install_hint="Requires the buzz CLI binary (https://github.com/block/buzz) on PATH or at BUZZ_CLI_PATH",
+        install_hint="Requires a Buzz relay URL and profile credentials; sending also needs the buzz CLI on PATH or at cli_path",
         setup_fn=interactive_setup, env_enablement_fn=_env_enablement, apply_yaml_config_fn=_apply_yaml_config,
         cron_deliver_env_var="BUZZ_HOME_CHANNEL", standalone_sender_fn=_standalone_send,
         allowed_users_env="BUZZ_ALLOWED_USERS", allow_all_env="BUZZ_ALLOW_ALL_USERS", emoji="🐝",
